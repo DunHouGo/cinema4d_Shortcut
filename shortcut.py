@@ -1,20 +1,10 @@
-#=============================================
-#                  信息 Info
-#=============================================
-"""
-Last Update : 2022/12/01
-
-Author: 王敦厚Go (DunHou)
-Written for Maxon Cinema 4D R2023.1.0
-Python version 3.9.1
-Custom Cinema 4D Shortcut Functions
-
-"""
 import c4d
-import typing
-from typing import Optional
+from dataclasses import dataclass,field
+from typing import Optional, Union, TypeAlias
+from pprint import pp
+
 #=============================================
-#                  介绍 Intro
+#                  Intro
 #=============================================
 """
 如何在Cinema 4D中查找和删除快捷方式。
@@ -87,304 +77,111 @@ ord(): str => ASCII
 
 strokeData: list[tuple[int, int]]
 """
-#=============================================
-#                    Class
-#=============================================
-""" 
+
+# Windows ID
+# 目前没有地方能查询到（包括symbol.h文件）, 我找到的获取途径是通过FindShortcutAssign，指认到管理器后查询。
+# 这里罗列出一些常用ID
+ARNOLD_IPR: int = 1032195
+ARNOLD_SHADER_NETWORK: int = 1033989
+ASSET_BROWSER: int = 1054225
+ATTRIBUTTE_MANAGER: int = 1000468
+CONSOLE: int = 10214
+CORONA_NODE_MANAGER: int = 1040908
+LAYER_MANAGER: int = 100004704
+MATERIAL_MANAGER: int = 150041
+NODEEDITOR_MANAGER: int = 465002211
+OBJECT_MANAGER: int = 100004709
+PICTURE_VIEWER: int = 430000700
+PROJECT_ASSET_INSPECTOR : int = 1029486
+TIMELINE_MANAGER: int = 465001516
+XPPRESSO_MANAGER: int = 1001148
+TAKE_MANAGER: int = 431000053
+RENDER_QUEUE: int = 465003500
+RENDER_SETTING: int = 12161
+VIEWPORT: int = 59000
+
 #! keySequence:  list[typing.Union[int, str]]
 #! 键盘输入序列列表, e.g., [c4d.QUALIFIER_SHIFT, '1'] , [4,'2'] , [0, 'Y']
+#! strokeData (list): 由修饰键+Key组成的元组列表 [(5,83),(84)]
 
-1.获取插件快捷键列表
-2.获取快捷键序号(序号,不存在时返回False)
-3.删除快捷键
-4.获取快捷键指认的插件id和管理器id
-5.添加快捷键到对应的插件id和管理器id(可选)
-6.KeySequence转换StrokeData
-7.检测快捷键是否已经绑定给指定插件
-8.为插件添加快捷键(监测快捷键指认)
+#=============================================
+#                   Codes
+#=============================================
 
-"""
-class ShortCut():
-    # 0.init function
-    def __init__(self) -> None:
-        # print("Custom shortcut library import success!")
-        pass
-    # _ 辅助：输入同时执行
-    def check_special_input(self,QUALIFIER:int, key:str):
-        bc: c4d.BaseContainer = c4d.BaseContainer()
-         # Querying for a specific key with GetInputState.
-         
-        # Note that you must poll for upper case characters, e.g., X instead of x.
-        if not c4d.gui.GetInputState(c4d.BFM_INPUT_KEYBOARD, ord (key.upper()), bc):
-            raise RuntimeError("Failed to query input events.")
-        # Test if the queried key is indeed being pressed.
-        print (f"{bc[c4d.BFM_INPUT_VALUE] == 1 = }")
-        # Test if this did co-occur with a CTRL button press.
-        print (f"{bc[c4d.BFM_INPUT_QUALIFIER] == QUALIFIER = }")
-    # _ 辅助：执行时输入
-    def check_input_state(self):
-        bc: c4d.BaseContainer = c4d.BaseContainer()
-        # Querying for a specific key with GetInputState.
-
-        if not c4d.gui.GetInputEvent(c4d.BFM_INPUT_KEYBOARD, bc):
-            raise RuntimeError("Failed to query input events.")
-
-        # Get the key which is currently be pressed as an ASCII value.
-        print (f"{bc[c4d.BFM_INPUT_CHANNEL] = } ({chr (bc[c4d.BFM_INPUT_CHANNEL])})")
-        # We can still read all the other things which are written into an input event container, as
-        # for example a modifier key state.
-        print (f"{bc[c4d.BFM_INPUT_QUALIFIER]}")  
-    # 1.获取插件快捷键元组列表
-    def GetPluginShortcuts(self,pluginID: int , print_console: bool = False) -> list[list[tuple[int]]]:
-        """Retrieves the shortcuts for a plugin-id.
-
-        Args:
-            pid (int): The plugin id.
+# 这是快捷键在C4D中的数据结构,是由修饰键+Key组成的元组列表 如[(5,83),(84)]
+@dataclass
+class StrokeData:
+    """This is the data structure of shortcut keys in C4D, it is a list of tuples consisting of modifier keys + Key. E.g[(5,83),(84)]"""
+    data: list[tuple[int]] = field(default_factory=None)
+        
+    def __str__(self) -> str:
+        return f"StrokeData: {self.data}, with shortcuts: {self.ToString()}"
+            
+    def ToString(self) -> str:
+        """Generate a string representation of the StrokeData."""
+        res = []
+        separator = '~' 
+        for item in self.data:
+            index, shortcut = item
+            shortkey = c4d.gui.Shortcut2String(index, shortcut)
+            res.append(shortkey)            
+        return separator.join(res)
+    
+    def IsValid(self) -> bool:
+        """
+        Check if the StrokeData is valid.
 
         Returns:
-            list[list[tuple[int]]]: The shortcut sequences for the plugin.
+            bool: True if the StrokeData is valid, False otherwise.
         """
-        # Get all shortcut containers for the plugin id.
-        count = c4d.gui.GetShortcutCount()
-        matches = [c4d.gui.GetShortcut(i) for i in range(count)
-                    if c4d.gui.GetShortcut(i)[c4d.SHORTCUT_PLUGINID] == pluginID]
-
-        # build the shortcut data.
-        result = []
-        for item in matches:
-            sequence = []
-            for i in range(0, c4d.SHORTCUT_PLUGINID, 10):
-                a, b = item[i], item[i+1]
-                if isinstance(a, (int, float)):
-                    sequence.append((a, b))
-
-            if sequence != []:
-                result.append(sequence)
-        if print_console == True:
-        # Output in console
-            print("---------------")
-            print("Plugin Name : {}".format(c4d.plugins.FindPlugin(pluginID).GetName()))             
-            for item in result:
-                for a, b in item:
-                    
-                    print (a, c4d.gui.Shortcut2String(a, b))
-            print("---------------")
-        if result == []:
-            result = None
-        return result
-    # 2.获取快捷键全局序号(序号,不存在时返回False)
-    def CheckShortcurIndex(self, keySequence: list[typing.Union[int, str]], 
-                    managerId: typing.Optional[int] = None,
-                    pluginId: typing.Optional[int] = None) -> bool:
-        """
-        Finds a shortcut index by the given #keySequence and optionally #managerId and/or #pluginId.
-        False if shortcut didn't matched
-            
-        Args:
-            keySequence: A sequence of keyboard inputs, e.g., [c4d.QUALIFIER_SHIFT, '1'].
-            managerId (optional): The manager context of the shortcut to find or remove.
-            pluginId (optional): The plugin ID of the plugin invoked by the shortcut.
-        
-        Returns:
-            The success of the removal operation.
-
-        Raises:
-            RuntimeError: On illegal key symbols.
-            RuntimeError: On non-existing shortcut key sequences.
-        """
-        # The list of key stroke modifier-key tuples.
-        strokeData: list[tuple[int, int]] = []
-        # A variable to OR together the qualifiers for the current key stroke.
-        currentModifiers: int = 0
-
-        #todo 获取 [strokeData]  
-        #todo 转换keySequence:[c4d.QUALIFIER_SHIFT, '1'] => Output [(1, 49)]
-        for key in keySequence:
-            # Modifier key sequence, e.g., SHIFT + ALT + CTRL
-            if isinstance(key, (int, float)):
-                currentModifiers |= key
-            # Character.
-            elif isinstance(key, str) and len(key) == 1:
-                strokeData.append((currentModifiers, ord(key.upper())))
-                currentModifiers = 0
-            # Errors
-            else:
-                raise RuntimeError(f"Found illegal key symbol: {key}")
-        
-        #todo Get the shortcut at #index.
-        # Iterate over all shortcuts in Cinema 4D.
-        for index in range(c4d.gui.GetShortcutCount()):
-            
-            bc: c4d.BaseContainer = c4d.gui.GetShortcut(index)
-
-            # if #strokeData matches #bc.
-            isMatch: bool = True
-            for i, (qualifier, key) in enumerate(strokeData):
-                idQualifier: int = i * 10 + 0
-                idKey: int = i * 10 + 1
-                # A qualifier + key stroke did not match, we break out.
-                #? C4D中不存在此快捷键
-                if bc[idQualifier] != qualifier or bc[idKey] != key:
-                    isMatch = False
-                    break
-            
-            # Something in the key sequence did not match with #strokeData, so we try the next shortcut
-            # container provided by the outer loop.
-            if not isMatch:
-                continue
-            
-            # We could do here some additional tests, as shortcut key strokes do not have to be unique,
-            # i.e., there could be two short-cuts "Shift + 1" bound to different manager contexts.
-            if pluginId is not None and bc[c4d.SHORTCUT_PLUGINID] != pluginId:
-                continue
-            if managerId is not None and bc[c4d.SHORTCUT_ADDRESS] != managerId:
-                continue
-            
-            # All tests succeeded, the shortcut at the current index should be removed, we instead just
-            # return the index to make this example a bit less volatile.
-
-            # return c4d.gui.RemoveShortcut(index)
-            return index
-
-        # All shortcuts have been traversed and no match was found, the user provided a key sequence
-        # which is not a shortcut.
-        return False
-    # 3.删除快捷键    
-    def RemoveShortcut(self,keySequence: list[typing.Union[int, str]], 
-                    managerId: typing.Optional[int] = None,
-                    pluginId: typing.Optional[int] = None) -> bool:
-        """
-        Remove Shortcut by given qualifier and key    
-            
-        Args:
-            qualifier (int): modifier key 
-            key (int): ascii code of key
-        """
-        index = ShortCut.CheckShortcurIndex(keySequence,managerId,pluginId)
-        
-        try:
-            if index:
-                c4d.gui.RemoveShortcut(index)
-        except:
-            print ("Shortcut Remove Failed")
-            return False   
-    # 4.获取快捷键指认的插件id和管理器id
-    def FindShortcutAssign(self,keySequence: list[typing.Union[int, str]]) -> bool:
-        """
-        Finds a shortcut assigned plugin id and name
-            
-        Args:
-            keySequence: A sequence of keyboard inputs, e.g., [c4d.QUALIFIER_SHIFT, '1'].
-        
-        Returns:
-            The plugin id.
-            The plugin name.
-            
-        Raises:
-            RuntimeError: On illegal key symbols.
-            RuntimeError: On non-existing shortcut key sequences.
-        """
-        # The list of key stroke modifier-key tuples.
-        strokeData: list[tuple[int, int]] = []
-        # A variable to OR together the qualifiers for the current key stroke.
-        currentModifiers: int = 0
-
-        #todo 获取 [strokeData]  
-        #todo 转换keySequence:[c4d.QUALIFIER_SHIFT, '1'] => Output [(1, 49)]
-        for key in keySequence:
-            # Extend a modifier key sequence, e.g., SHIFT + ALT + CTRL
-            if isinstance(key, (int, float)):
-                currentModifiers |= key
-            # A character key was found, append an input event.
-            elif isinstance(key, str) and len(key) == 1:
-                strokeData.append((currentModifiers, ord(key.upper())))
-                currentModifiers = 0
-            # Something else was found, yikes :)
-            else:
-                raise RuntimeError(f"Found illegal key symbol: {key}")
-        
-        #todo Get the shortcut at #index.
-        # Now we can iterate over all shortcuts in Cinema 4D.
-        for index in range(c4d.gui.GetShortcutCount()):            
-            bc: c4d.BaseContainer = c4d.gui.GetShortcut(index)
-            # We test if #strokeData matches #bc.
-            isMatch: bool = True
-            for i, (qualifier, key) in enumerate(strokeData):
-                idQualifier: int = i * 10 + 0
-                idKey: int = i * 10 + 1
-                # A qualifier + key stroke did not match, we break out.
-                #? C4D中不存在此快捷键
-                if bc[idQualifier] != qualifier or bc[idKey] != key:
-                    isMatch = False
-                    break
-            if not isMatch:
-                continue
-
-            pluginId = bc[c4d.SHORTCUT_PLUGINID]
-            managerId = bc[c4d.SHORTCUT_ADDRESS]
-            return pluginId,managerId
-        return False
-    # 5.添加快捷键到对应的插件id和管理器id(可选)     
-    def AddShortCut(self,keySequence: list[typing.Union[int, str]], 
-                    pluginId,
-                    managerId: typing.Optional[int] = None,
-                    ) -> bool:
-        """
-        Add Shortcut by given qualifier and key to given ID  
-            
-        Args:
-            qualifier (int): modifier key 
-            key (int): ascii code of key
-            pluginID (int): plugin ID
-        """
-        # The list of key stroke modifier-key tuples.
-        strokeData: list[tuple[int, int]] = []
-        # A variable to OR together the qualifiers for the current key stroke.
-        currentModifiers: int = 0
-            
-        for key in keySequence:
-            # Extend a modifier key sequence, e.g., SHIFT + ALT + CTRL
-            if isinstance(key, (int, float)):
-                currentModifiers |= key
-            # A character key was found, append an input event.
-            elif isinstance(key, str) and len(key) == 1:
-                #strokeData.append((currentModifiers, ord(key.upper())))
-                qualifier = currentModifiers
-                key = ord(key.upper())
-                currentModifiers = 0
-            # Something else was found, yikes :)
-            else:
-                raise RuntimeError(f"Found illegal key symbol: {key}")
-        
-        for x in range(c4d.gui.GetShortcutCount()):
-            shortcutBc = c4d.gui.GetShortcut(x)
-            # Check if shortcut is stored in the basecontainer.        
-            if shortcutBc[0] == qualifier and shortcutBc[1] == key:
-                if shortcutBc[c4d.SHORTCUT_PLUGINID] == pluginId:
-                    print ("Shortcut {} is already Used for Command ID: {}".format(c4d.gui.Shortcut2String(qualifier, key), shortcutBc[c4d.SHORTCUT_PLUGINID]))
-                    return
-            
-        # Define shortcut container
-        bc = c4d.BaseContainer()
-        bc.SetInt32(c4d.SHORTCUT_PLUGINID, pluginId)
-        bc.SetLong(c4d.SHORTCUT_ADDRESS, 0)
-        bc.SetLong(c4d.SHORTCUT_OPTIONMODE, 0)
-        # User defined key
-        bc.SetLong(0, qualifier)
-        bc.SetLong(1, key)
-        if c4d.gui.AddShortcut(bc):
-            print("Shortcut Installed Susessful")
+        if self.data is None:
+            return False
+        if not isinstance(self.data, list):
+            False
+        for item in self.data:
+            if not isinstance(item, tuple):
+                return False
         return True
-    # 6.KeySequence转换StrokeData
-    #   ++》[c4d.QUALIFIER_SHIFT, '1'] => Output [(1, 49)]
-    def KeySequencetoStrokeData(self,keySequence: list[typing.Union[int, str]]):
+
+    @property
+    def Data(self) -> list[tuple[int]]:
+        """The list data of the StrokeData."""
+        return self.data
+
+    @Data.setter
+    def Data(self, value: list[tuple[int]]) -> None:
+        self.data = value
+
+# 这是用户可读的快捷键形式, 由修饰键+Key组成的列表, 如[c4d.QUALIFIER_SHIFT, '1']
+@dataclass
+class KeySequence:
+    """This is the user-readable form of shortcuts, consisting of a list of modifier keys + Key, e.g.[c4d.QUALIFIER_SHIFT, '1']"""
+    data: list[int, str] = field(default_factory=None)
+            
+    def CovertToStrokeData(self) -> StrokeData:
+        """
+        Convert KeySequence to StrokeData.
+
+        ---
+        Example:
+        1.[c4d.QUALIFIER_SHIFT, '1'] => Output [(1, 49)]
+        2.[c4d.QUALIFIER_SHIFT, c4d.QUALIFIER_ALT, "S", "T"] => Output [(5,83),(0,84)]
+
+        Alt : c4d.QUALIFIER_ALT = 4
+        
+        Ctrl : c4d.QUALIFIER_CTRL = 2
+        
+        Shift : c4d.QUALIFIER_SHIFT = 1
+
+        Returns:
+            StrokeData: StrokeData of the KeySequence.
+        """
         strokeData: list[tuple[int, int]] = []
         # A variable to OR together the qualifiers for the current key stroke.
         currentModifiers: int = 0
-
-        #todo 获取 [strokeData]
-        #todo 转换keySequence:[c4d.QUALIFIER_SHIFT, '1'] => Output [(1, 49)]
-        for key in keySequence:
+        # 获取 [strokeData]
+        # 转换keySequence:[c4d.QUALIFIER_SHIFT, '1'] => Output [(1, 49)]
+        for key in self.data:
             # Extend a modifier key sequence, e.g., SHIFT + ALT + CTRL
             if isinstance(key, (int, float)):
                 currentModifiers |= key
@@ -392,73 +189,251 @@ class ShortCut():
             elif isinstance(key, str) and len(key) == 1:
                 strokeData.append((currentModifiers, ord(key.upper())))
                 currentModifiers = 0
-            # Something else was found, yikes :)
             else:
                 raise RuntimeError(f"Found illegal key symbol: {key}")
         return strokeData
-    # 7.检测快捷键是否已经绑定给指定插件
-    def PluginhasShortcut(self, keySequence: list[typing.Union[int, str]], pluginId:int):
-        """Check if shortcut binding with given plugin
-        Args:
-            keySequence: A sequence of keyboard inputs, e.g., [c4d.QUALIFIER_SHIFT, '1'].            
-            pluginId (optional): The plugin ID of the plugin invoked by the shortcut.
+
+    def ToString(self) -> str:
+        """Generate a string representation of the StrokeData."""
+        strokeData: StrokeData = self.CovertToStrokeData()
+        return strokeData.ToString()
+
+    def IsValid(self) -> bool:
+        """
+        Check if the KeySequence is valid.
 
         Returns:
-            bool: True if Shcrtcut with the plugin
+            bool: True if the KeySequence is valid, False otherwise.
         """
-        assigned_shortcut = self.GetPluginShortcuts(pluginId)
-        given_shortcut = self.KeySequencetoStrokeData(keySequence)
-        if len(assigned_shortcut) == 1 and assigned_shortcut[0] == given_shortcut: # 唯一
-            return True
-        if len(assigned_shortcut) > 1 and given_shortcut in assigned_shortcut: # 其中之一
-            return True
-        if not assigned_shortcut: # 没用指认快捷键
+        if self.data is None:
             return False
-        else:
+        for item in self.data:
+            if not isinstance(item, (int, str)):
+                return False
+        return True
+
+    @property
+    def Data(self) -> list[tuple[int]]:
+        """The list data of the KeySequence."""
+        return self.data
+
+    @Data.setter
+    def Data(self, value: list[tuple[int]]) -> None:
+        self.data = value
+
+# We define a type alias for the data type of the shortcut.
+KeyData = Union[KeySequence, StrokeData, list[int, str], list[tuple[int]]]
+
+# Convert keys data to the StrokeData we need.
+def ToStrokeData(data: KeyData) -> Optional[StrokeData]:
+    """
+    Convert given data to StrokeData.
+
+    Args:
+        data (Union[KeySequence, StrokeData, list[int, str], list[tuple[int]]]): the date we want to convert.
+
+    Returns:
+        Optional[StrokeData]: the StrokeData of the KeySequence. else None
+    """
+    if isinstance(data, KeySequence):
+        return data.CovertToStrokeData()
+    elif isinstance(data, StrokeData):
+        return data
+    elif isinstance(data, list):
+        if (res := KeySequence(data)).IsValid():
+            return res.CovertToStrokeData()
+        elif (res := StrokeData(data)).IsValid():
+            return res
+    return None
+
+# 获取插件快捷键元组列表
+def GetPluginShortcuts(pluginID: int , print_console: bool = False) -> Optional[StrokeData]:
+    """Retrieves the shortcuts for a plugin-id.
+
+    Args:
+        pid (int): The plugin id.
+
+    Returns:
+        list[list[tuple[int]]]: The shortcut sequences for the plugin.
+    """
+    # Get all shortcut containers for the plugin id.
+    count = c4d.gui.GetShortcutCount()
+    matches = [c4d.gui.GetShortcut(i) for i in range(count) if c4d.gui.GetShortcut(i)[c4d.SHORTCUT_PLUGINID] == pluginID]
+
+    # build the shortcut data.
+    result: list[StrokeData] = []
+    for item in matches:
+        sequence: list = []
+        for i in range(0, c4d.SHORTCUT_PLUGINID, 10):
+            index, shortcut = item[i], item[i+1]
+            if isinstance(index, (int, float)):
+                sequence.append((index, shortcut))
+        if sequence != []:
+            result.append(sequence)
+
+    if print_console == True:
+    # Output in console
+        print("---------------")
+        print("Plugin Name : {}".format(c4d.plugins.FindPlugin(pluginID).GetName()))             
+        for item in result:
+            for index, shortcut in item:                
+                print (index, c4d.gui.Shortcut2String(index, shortcut))
+        print("---------------")
+    if result == []:
+        result = None
+    return result
+
+# 获取快捷键全局序号(序号,不存在时返回False)
+def GetIndex(keydata: KeyData, managerId: Optional[int] = None, pluginId: Optional[int] = None) -> Union[int, bool]:
+    """Checks the #Index of given shortcut sequence, return False if not exsit."""
+    strokeData: list[tuple[int, int]] = ToStrokeData(keydata)
+    
+    # Get the shortcut at #index.
+    for index in range(c4d.gui.GetShortcutCount()):
+        
+        bc: c4d.BaseContainer = c4d.gui.GetShortcut(index)
+
+        isMatch: bool = True
+        for i, (qualifier, key) in enumerate(strokeData):
+            idQualifier: int = i * 10 + 0
+            idKey: int = i * 10 + 1
+            # C4D中不存在此快捷键
+            if bc[idQualifier] != qualifier or bc[idKey] != key:
+                isMatch = False
+                break
+
+        # Something in the key sequence did not match with #strokeData, so we try the next shortcut
+        # container provided by the outer loop.
+        if not isMatch:
+            continue
+        
+        # We could do here some additional tests, as shortcut key strokes do not have to be unique,
+        # i.e., there could be two short-cuts "Shift + 1" bound to different manager contexts.
+        if pluginId is not None and bc[c4d.SHORTCUT_PLUGINID] != pluginId:
+            continue
+        if managerId is not None and bc[c4d.SHORTCUT_ADDRESS] != managerId:
+            continue
+        
+        # The shortcut was found.
+        return index
+    return False
+
+# 获取包含此快捷键的序号列表
+def GetAllIndexs(keydata: KeyData) -> list:
+    """Return all the #Index of given shortcut sequence in a list."""
+    strokeData: list[tuple[int, int]] = ToStrokeData(keydata)
+    
+    res = []
+    # Get the shortcut at #index.
+    for index in range(c4d.gui.GetShortcutCount()):        
+        bc: c4d.BaseContainer = c4d.gui.GetShortcut(index)
+        isMatch: bool = True
+        for i, (qualifier, key) in enumerate(strokeData):
+            idQualifier: int = i * 10 + 0
+            idKey: int = i * 10 + 1
+            # C4D中不存在此快捷键
+            if bc[idQualifier] != qualifier or bc[idKey] != key:
+                isMatch = False
+                break
+        if not isMatch:
+            continue
+        res.append(index)
+    return res
+
+# 删除快捷键    
+def RemoveShortcut(keydata: KeyData, managerId: Optional[int] = None, pluginId: Optional[int] = None) -> bool:
+    """Remove Shortcut by given KeyData"""
+    if (index := GetIndex(keydata,managerId,pluginId)):
+        return c4d.gui.RemoveShortcut(index)
+    return False
+
+# 获取快捷键指认的插件id
+def GetAssignmentId(keydata: KeyData, managerId: Optional[int] = None) -> int:
+    """Get assigned plugin id with given shortcut """
+    res: list = []
+    if managerId is None:
+        indexs = GetAllIndexs(keydata)
+        if len(indexs) == 0:
             return False
-    # 8.为插件添加快捷键(监测快捷键指认)
-    def SetPluginsShortcut(self,keySequence: list[typing.Union[int, str]], pluginId:int):
-        #sc_renderflow = [0, '`']
-        # tip 如果插件没有指认自定义快捷键
-        if self.GetPluginShortcuts(pluginId) is None :
-            # tip 如果全局快捷键中没有指定快捷键
-            if self.FindShortcutAssign(keySequence) == False :
-                try:
-                    self.AddShortCut(keySequence,pluginId)
-                except:
-                    raise RuntimeError("Shortcut assign Failed")
+        for index in indexs:
+            bc: c4d.BaseContainer = c4d.gui.GetShortcut(index)
+            pluginId = bc[c4d.SHORTCUT_PLUGINID]
+            res.append(pluginId)
+        return res
+    else:
+        index = GetIndex(keydata,managerId)
+        bc: c4d.BaseContainer = c4d.gui.GetShortcut(index)
+        pluginId = bc[c4d.SHORTCUT_PLUGINID]
+    return pluginId
 
-# # Examples
-# # Shortcut Assgn when Start C4D
+# 获取快捷键指认管理器id
+def GetManagerId(keydata: KeyData, pluginId: Optional[int] = None) -> int:
+    """Finds a shortcut assigned plugin id and name"""
+    res: list = []
+    if pluginId is None:
+        indexs = GetAllIndexs(keydata)
+        if len(indexs) == 0:
+            return False
+        for index in indexs:
+            bc: c4d.BaseContainer = c4d.gui.GetShortcut(index)
+            managerId = bc[c4d.SHORTCUT_ADDRESS]
+            if managerId != 0:
+                res.append(managerId)
+        return res
+    else:
+        index = GetIndex(keydata,pluginId=pluginId)
+        bc: c4d.BaseContainer = c4d.gui.GetShortcut(index)
+        managerId = bc[c4d.SHORTCUT_ADDRESS]
+    return managerId
 
-# 如果插件没有指认自定义快捷键，并且全局快捷键中没有指定快捷键，则为插件指认快捷键
+# 检测插件是否有指认的快捷键
+def PluginHasShortcut(keydata: KeyData, pluginId: int) -> bool:
+    """Check if shortcut binding with given plugin"""
+    assigned_shortcut = GetPluginShortcuts(pluginId)
+    if assigned_shortcut is None:
+        return False
+    given_shortcut = ToStrokeData(keydata)
+    if len(assigned_shortcut) == 1 and assigned_shortcut[0] == given_shortcut: # 唯一
+        return True
+    if len(assigned_shortcut) > 1 and given_shortcut in assigned_shortcut: # 其中之一
+        return True
+    if not assigned_shortcut: # 没用指认快捷键
+        return False
+    else:
+        return False
 
-# Import custom library to use in plugin
-# import os,sys
+# 添加快捷键到对应的插件id和管理器id(可选)     
+def AddShortCut(keydata: KeyData, pluginId, managerId: Optional[int] = 0) -> bool:
+    """Add Shortcut by given qualifier and key to given ID"""
+    if PluginHasShortcut(keydata, pluginId):
+        return True
+    strokeData: list[tuple[int, int]] = ToStrokeData(keydata)
+    # Define shortcut container
+    bc = c4d.BaseContainer()
+    bc.SetInt32(c4d.SHORTCUT_PLUGINID, pluginId)
+    bc.SetLong(c4d.SHORTCUT_ADDRESS, managerId)
+    bc.SetLong(c4d.SHORTCUT_OPTIONMODE, 0)
+    # User defined key
+    for count, stroke in enumerate(strokeData): # [(5,83),(84)]
+        if isinstance(stroke, tuple):
+            bc.SetLong(count*10, stroke[0])
+            bc.SetLong(count*10 + 1, stroke[1])
+        elif isinstance(stroke, int):
+            bc.SetLong(count*10, 0)
+            bc.SetLong(count*10 + 1, 0)
+    # Add shortcut
+    return c4d.gui.AddShortcut(bc)
 
-# PluginID = 1234567 # Unique ID from www.plugincafe.com
+# 为插件添加快捷键(监测快捷键指认)
+def SetPluginsShortcut(keydata: KeyData, pluginId:int, forced: bool = False) -> bool:
+    if forced:
+        return AddShortCut(keydata, pluginId)
+    else:
+        # 如果插件没有指认自定义快捷键
+        if GetPluginShortcuts(pluginId) is None:
+            # 如果全局快捷键中没有指定快捷键
+            if not GetAssignmentId(keydata):
+                return AddShortCut(keydata,pluginId)
+        return False
 
-# PLUGIN_PATH, f = os.path.split(__file__)
-# Lib_Path = os.path.join(PLUGIN_PATH,"res","lib")
-# sys.path.insert(0, Lib_Path)
 
-# try:
-#     import shortcut 
-#     reload(shortcut)  
-#     # help(shortcut)  
-# finally:
-#     # Remove the path we've just inserted.
-#     sys.path.pop(0)
-
-# PLUGINS Codes
-
-# # $ Shortcut Register
-# # Check shortcut add add ~ to this Plunin    
-# def PluginMessage(id, data):
-#     # Shortcut Assign when Start C4D
-#     if id == c4d.C4DPL_PROGRAM_STARTED:
-#         # tip : list[typing.Union[int, str]]
-#         keySequence = [0, '`']  # ~ 
-#         shortcut.ShortCut().SetPluginsShortcut(keySequence, PluginID)
-#         c4d.EventAdd()
-#     return False
